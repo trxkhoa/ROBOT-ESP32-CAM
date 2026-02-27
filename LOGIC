@@ -1,28 +1,54 @@
-THIẾT KẾ VÀ TRIỂN KHAI XE TỰ LÁI AGV KÉO LINH KIỆN TRONG NHÀ MÁY
-Tên đề tài
+TÀI LIỆU PHÁT TRIỂN THIẾT KẾ
+HỆ THỐNG XE AGV KÉO LINH KIỆN TRONG NHÀ MÁY
 
-Thiết kế và phát triển xe tự hành AGV kéo linh kiện sử dụng điều hướng bằng thị giác máy tính trong môi trường nhà máy thông minh
-
-Tóm tắt
-
-Bài báo trình bày quá trình thiết kế và triển khai một hệ thống xe tự hành AGV có khả năng kéo tải trọng lên đến 80 kg (30 kg trên xe và 50 kg toa kéo) trong môi trường nhà máy trong nhà. Hệ thống sử dụng kiến trúc điều khiển hai lớp gồm: bộ xử lý điều hướng bằng camera sử dụng ESP32-S3 và bộ điều khiển chuyển động sử dụng Arduino Mega 2560. Xe sử dụng cơ cấu bánh mecanum 4 bánh cho phép di chuyển linh hoạt. Thuật toán điều khiển bao gồm nhận diện vạch đường, xử lý lệch tâm, điều khiển PID tốc độ dựa trên encoder và hệ thống an toàn tránh vật cản. Kết quả thực nghiệm cho thấy hệ thống hoạt động ổn định ở tốc độ 4–5 km/h với sai số bám đường nhỏ và phản ứng nhanh với chướng ngại vật.
-
-Từ khóa
-
-AGV, bánh mecanum, điều hướng bằng camera, PID, ESP32-S3, Arduino Mega 2560, nhà máy thông minh
-
-I. GIỚI THIỆU
-
-Trong bối cảnh chuyển đổi số và sản xuất thông minh (Industry 4.0), hệ thống vận chuyển linh kiện tự động trong nhà máy đóng vai trò quan trọng trong việc tối ưu hóa dòng vật liệu và giảm phụ thuộc lao động thủ công.
-
-Nghiên cứu này đề xuất một hệ thống AGV kéo linh kiện sử dụng điều hướng bằng thị giác thay vì băng từ hoặc cảm biến line truyền thống, nhằm tăng tính linh hoạt và khả năng mở rộng.
-
-Hệ thống được chia thành hai lớp điều khiển:
-
-Lớp điều hướng (Navigation Layer)
-
-Lớp điều khiển chuyển động (Motion Control Layer)
-
-II. CẤU TRÚC HỆ THỐNG
-A. Cấu trúc cơ khí
-
+1. Giới thiệu hệ thống
+Hệ thống AGV được phát triển nhằm vận chuyển linh kiện trong nhà máy với tải trọng 30kg trên xe và kéo thêm 50kg, tổng tải trọng khoảng 80kg. Xe hoạt động trong hành lang có vạch màu xanh và ký hiệu rẽ màu vàng, nhận diện trạm giao hàng bằng mã QR.
+Tốc độ mục tiêu: 5 km/h.
+Cấu hình chính gồm 4 bánh mecanum 100mm, 4 động cơ DC servo có encoder, ESP32-CAM S3 và Arduino Mega.
+2. Kiến trúc hệ thống
+Hệ thống được chia thành hai khối chính:
+- Khối xử lý hành trình (ESP32-CAM S3): nhận diện vạch, QR và gửi lệnh điều hướng.
+- Khối điều khiển vận động (Arduino Mega): điều khiển động cơ, PID encoder và hệ thống an toàn.
+Luồng điều khiển: ESP32-CAM → UART → Arduino Mega → Driver Servo → Động cơ.
+3. Thiết kế cơ khí
+- Khung thép hộp 30x30mm.
+- Mặt sàn nhôm 5mm.
+- Cấu hình bánh mecanum dạng chữ X.
+- Khả năng di chuyển: tiến/lùi, ngang, chéo, xoay tại chỗ.
+4. Thiết kế điện và nguồn
+- Nguồn chính 24V.
+- Bộ chuyển đổi Buck 24V xuống 5V cho vi điều khiển và encoder.
+- Động cơ DC Servo Planetary 24V có encoder ≥ 500CPR.
+- Driver servo chuyên dụng điều khiển PID chính xác.
+5. Thuật toán giữ làn đường
+Quy trình xử lý hình ảnh:
+1. Chụp ảnh từ camera.
+2. Chuyển sang ảnh xám.
+3. Threshold theo màu xanh.
+4. Tìm biên trái và phải.
+5. Tính midpoint.
+6. Tính sai lệch tâm và gửi giá trị OFFSET về Arduino Mega.
+6. Điều khiển vận động
+Arduino Mega nhận lệnh như: FWD, LEFT, RIGHT, STOP, OFFSET.
+Công thức hiệu chỉnh tốc độ:
+Speed_Left = BaseSpeed - Kp × Offset
+Speed_Right = BaseSpeed + Kp × Offset
+7. Hệ thống an toàn
+- Cảm biến khoảng cách phát hiện vật cản.
+- Giảm tốc khi vật cản < 30cm.
+- Dừng khẩn cấp khi < 20cm.
+- Nút Emergency Stop vật lý và trên remote.
+8. Tay điều khiển gián tiếp
+- Kết nối Bluetooth với Arduino Mega.
+- Joystick điều hướng cơ bản.
+- Núm encoder chỉnh tốc độ.
+- Hiển thị tốc độ, quãng đường, thời gian hoạt động.
+- Độ trễ cho phép: 0.5 giây.
+9. Lộ trình phát triển
+Giai đoạn 1: Điều khiển tay, PID encoder.
+Giai đoạn 2: Vision giữ làn và rẽ theo ký hiệu.
+Giai đoạn 3: QR station, an toàn nâng cao, docking tự động.
+10. Khả năng mở rộng
+- Tích hợp LiDAR hoặc SLAM.
+- Kết nối hệ thống quản lý nhà máy (MES).
+- Quản lý đội xe (Fleet Management).
