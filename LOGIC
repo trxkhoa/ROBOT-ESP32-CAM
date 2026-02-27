@@ -1,1 +1,28 @@
+THIẾT KẾ VÀ TRIỂN KHAI XE TỰ LÁI AGV KÉO LINH KIỆN TRONG NHÀ MÁY
+Tên đề tài
+
+Thiết kế và phát triển xe tự hành AGV kéo linh kiện sử dụng điều hướng bằng thị giác máy tính trong môi trường nhà máy thông minh
+
+Tóm tắt
+
+Bài báo trình bày quá trình thiết kế và triển khai một hệ thống xe tự hành AGV có khả năng kéo tải trọng lên đến 80 kg (30 kg trên xe và 50 kg toa kéo) trong môi trường nhà máy trong nhà. Hệ thống sử dụng kiến trúc điều khiển hai lớp gồm: bộ xử lý điều hướng bằng camera sử dụng ESP32-S3 và bộ điều khiển chuyển động sử dụng Arduino Mega 2560. Xe sử dụng cơ cấu bánh mecanum 4 bánh cho phép di chuyển linh hoạt. Thuật toán điều khiển bao gồm nhận diện vạch đường, xử lý lệch tâm, điều khiển PID tốc độ dựa trên encoder và hệ thống an toàn tránh vật cản. Kết quả thực nghiệm cho thấy hệ thống hoạt động ổn định ở tốc độ 4–5 km/h với sai số bám đường nhỏ và phản ứng nhanh với chướng ngại vật.
+
+Từ khóa
+
+AGV, bánh mecanum, điều hướng bằng camera, PID, ESP32-S3, Arduino Mega 2560, nhà máy thông minh
+
+I. GIỚI THIỆU
+
+Trong bối cảnh chuyển đổi số và sản xuất thông minh (Industry 4.0), hệ thống vận chuyển linh kiện tự động trong nhà máy đóng vai trò quan trọng trong việc tối ưu hóa dòng vật liệu và giảm phụ thuộc lao động thủ công.
+
+Nghiên cứu này đề xuất một hệ thống AGV kéo linh kiện sử dụng điều hướng bằng thị giác thay vì băng từ hoặc cảm biến line truyền thống, nhằm tăng tính linh hoạt và khả năng mở rộng.
+
+Hệ thống được chia thành hai lớp điều khiển:
+
+Lớp điều hướng (Navigation Layer)
+
+Lớp điều khiển chuyển động (Motion Control Layer)
+
+II. CẤU TRÚC HỆ THỐNG
+A. Cấu trúc cơ khí
 
