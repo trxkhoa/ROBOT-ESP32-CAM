@@ -1,4 +1,5 @@
-
+//https://www.fypsolutions.com/robotics/line-following-algorithm-one-sensor/
+//https://github.com/embeddedlab786/Line_Follower_with_Obstacle_Avoiding_Robot/tree/main
 
 #define enA 10//Enable1 L298 Pin enA 
 #define in1 9 //Motor1  L298 Pin in1 
