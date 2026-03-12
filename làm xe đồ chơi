@@ -1,0 +1,470 @@
+Bản chỉnh lại đúng theo yêu cầu của bạn: không dùng servo để quét cảm biến, mà robot tự xoay thân xe bằng 2 bánh sau để dò trái/phải 90°, còn 2 servo lau nhà sẽ lắc qua lại 0–180° khi robot chạy, gặp vật cản thì dừng lau, tránh xong mới lau tiếp.
+
+Có một điểm rất quan trọng trước khi dùng code:
+
+Nếu bạn muốn “lắc qua lại 180°” thì phải dùng servo thường 180° (ví dụ SG90/MG90S), không dùng continuous rotation servo.
+Vì servo quay liên tục không điều khiển được góc 0°–180°, nó chỉ quay thuận/nghịch giống motor nhỏ.
+
+Logic hoạt động
+
+Khi bật nguồn:
+
+Robot đứng yên 2 giây
+
+Sau đó bắt đầu đi thẳng
+
+Hai servo lau lắc qua lại liên tục
+
+Nếu cảm biến khoảng cách thấy vật cản ≤ 5 cm:
+
+Robot dừng bánh xe
+
+dừng 2 servo lau
+
+xoay thân xe sang trái 90°
+
+đo lại khoảng cách phía trước
+
+nếu thoáng thì đi tiếp
+
+nếu vẫn bị cản thì xoay sang phải 180°
+
+đo lại
+
+nếu thoáng thì đi tiếp
+
+nếu vẫn bị cản thì quay về giữa và lùi nhẹ, rồi thử lại sau
+
+Code Arduino hoàn chỉnh
+
+Code dưới đây đã bỏ phần line follower, chỉ giữ lại phần tránh vật cản bằng siêu âm + xoay thân xe.
+
+#include <Servo.h>
+
+// ==========================
+// L298N Motor Driver
+// ==========================
+#define enA 10   // PWM motor trái
+#define in1 9
+#define in2 8
+#define in3 7
+#define in4 6
+#define enB 5    // PWM motor phải
+
+// ==========================
+// Ultrasonic Sensor HC-SR04
+// ==========================
+#define echoPin A2
+#define trigPin A3
+
+// ==========================
+// 2 Servo lau nhà
+// Dùng servo thường 180 độ
+// ==========================
+#define SERVO_LEFT_PIN 11
+#define SERVO_RIGHT_PIN 12
+
+Servo servoLeft;
+Servo servoRight;
+
+// ==========================
+// Tham số hệ thống
+// ==========================
+const int obstacleDistance = 5;     // cm, ngưỡng phát hiện vật cản
+const int motorSpeed = 180;         // tốc độ chạy 0-255
+const int turnSpeed  = 170;         // tốc độ khi xoay
+const int startDelay = 2000;        // chờ 2 giây sau khi bật nguồn
+
+// Thời gian xoay 90 độ
+// CẦN tự chỉnh thực tế theo xe của bạn
+const int turn90Time = 420;         // ms, thử từ 350~550 ms tùy xe
+
+// Thời gian lùi khi bí đường
+const int backTime = 350;
+
+// ==========================
+// Biến điều khiển servo lau
+// ==========================
+int sweepAngle = 0;
+int sweepStep = 4;
+unsigned long lastSweepTime = 0;
+const int sweepInterval = 25;       // ms
+bool cleaningEnabled = false;
+
+// ==========================
+// Setup
+// ==========================
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(echoPin, INPUT);
+  pinMode(trigPin, OUTPUT);
+
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  pinMode(enB, OUTPUT);
+
+  servoLeft.attach(SERVO_LEFT_PIN);
+  servoRight.attach(SERVO_RIGHT_PIN);
+
+  setMotorSpeed(motorSpeed, motorSpeed);
+  Stop();
+
+  // Đưa servo về vị trí ban đầu
+  servoLeft.write(90);
+  servoRight.write(90);
+
+  Serial.println("Robot dang khoi dong...");
+  delay(startDelay);   // chờ 2 giây theo yêu cầu
+
+  cleaningEnabled = true;
+  Serial.println("Bat dau di chuyen...");
+}
+
+// ==========================
+// Loop
+// ==========================
+void loop() {
+  updateCleaningServo();   // cho servo lau lắc liên tục khi được phép
+
+  long distanceF = Ultrasonic_read();
+  Serial.print("Front Distance = ");
+  Serial.println(distanceF);
+
+  if (distanceF <= obstacleDistance && distanceF > 0) {
+    avoidObstacle();
+  } else {
+    forward();
+  }
+
+  delay(20);
+}
+
+// ==========================
+// Hàm cập nhật servo lau
+// ==========================
+void updateCleaningServo() {
+  if (!cleaningEnabled) return;
+
+  unsigned long now = millis();
+  if (now - lastSweepTime >= sweepInterval) {
+    lastSweepTime = now;
+
+    sweepAngle += sweepStep;
+
+    if (sweepAngle >= 180) {
+      sweepAngle = 180;
+      sweepStep = -sweepStep;
+    }
+    if (sweepAngle <= 0) {
+      sweepAngle = 0;
+      sweepStep = -sweepStep;
+    }
+
+    // 2 servo có thể quay đối xứng để lau rộng hơn
+    servoLeft.write(sweepAngle);
+    servoRight.write(180 - sweepAngle);
+  }
+}
+
+// ==========================
+// Dừng servo lau
+// ==========================
+void stopCleaningServo() {
+  cleaningEnabled = false;
+  servoLeft.write(90);
+  servoRight.write(90);
+}
+
+// ==========================
+// Bật lại servo lau
+// ==========================
+void startCleaningServo() {
+  cleaningEnabled = true;
+}
+
+// ==========================
+// Đọc khoảng cách siêu âm
+// ==========================
+long Ultrasonic_read() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 30000); // timeout 30ms
+  if (duration == 0) return 999; // không thấy vật cản
+  long distance = duration / 29 / 2;
+  return distance;
+}
+
+// ==========================
+// Tránh vật cản
+// ==========================
+void avoidObstacle() {
+  Serial.println("Gap vat can -> dung lai");
+
+  Stop();
+  stopCleaningServo();
+  delay(200);
+
+  // 1. Quay trái 90 độ để kiểm tra
+  Serial.println("Kiem tra ben trai...");
+  rotateLeft90();
+  delay(200);
+
+  long leftDistance = Ultrasonic_read();
+  Serial.print("Left check = ");
+  Serial.println(leftDistance);
+
+  if (leftDistance > obstacleDistance) {
+    Serial.println("Ben trai thong, di tiep");
+    startCleaningServo();
+    forward();
+    delay(250);
+    return;
+  }
+
+  // 2. Nếu trái bị cản, quay phải 180 độ để nhìn sang phải
+  Serial.println("Ben trai bi can, kiem tra ben phai...");
+  rotateRight180();
+  delay(200);
+
+  long rightDistance = Ultrasonic_read();
+  Serial.print("Right check = ");
+  Serial.println(rightDistance);
+
+  if (rightDistance > obstacleDistance) {
+    Serial.println("Ben phai thong, di tiep");
+    startCleaningServo();
+    forward();
+    delay(250);
+    return;
+  }
+
+  // 3. Nếu cả hai bên đều bị cản, quay về giữa rồi lùi nhẹ
+  Serial.println("Ca hai ben deu bi can -> lui nhe");
+  rotateLeft90();   // từ hướng phải quay trái 90 để về hướng giữa
+  delay(200);
+
+  backward();
+  delay(backTime);
+  Stop();
+  delay(200);
+
+  startCleaningServo();
+}
+
+// ==========================
+// Chỉnh tốc độ 2 bánh
+// ==========================
+void setMotorSpeed(int leftSpeed, int rightSpeed) {
+  analogWrite(enA, constrain(leftSpeed, 0, 255));
+  analogWrite(enB, constrain(rightSpeed, 0, 255));
+}
+
+// ==========================
+// Điều khiển xe
+// ==========================
+void forward() {
+  setMotorSpeed(motorSpeed, motorSpeed);
+
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, HIGH);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+}
+
+void backward() {
+  setMotorSpeed(motorSpeed, motorSpeed);
+
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+}
+
+void turnLeftInPlace() {
+  setMotorSpeed(turnSpeed, turnSpeed);
+
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+}
+
+void turnRightInPlace() {
+  setMotorSpeed(turnSpeed, turnSpeed);
+
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, HIGH);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+}
+
+void Stop() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+}
+
+// ==========================
+// Xoay thân xe
+// ==========================
+void rotateLeft90() {
+  turnLeftInPlace();
+  delay(turn90Time);
+  Stop();
+}
+
+void rotateRight90() {
+  turnRightInPlace();
+  delay(turn90Time);
+  Stop();
+}
+
+void rotateRight180() {
+  turnRightInPlace();
+  delay(turn90Time * 2);
+  Stop();
+}
+Sơ đồ chân đang dùng
+
+Theo code trên:
+
+L298N
+
+ENA = 10
+
+IN1 = 9
+
+IN2 = 8
+
+IN3 = 7
+
+IN4 = 6
+
+ENB = 5
+
+HC-SR04
+
+Echo = A2
+
+Trigger = A3
+
+Servo lau
+
+Servo trái = 11
+
+Servo phải = 12
+
+Điểm cần tự chỉnh thực tế
+1. Thời gian xoay 90 độ
+
+Dòng này rất quan trọng:
+
+const int turn90Time = 420;
+
+Bạn phải test thực tế vì mỗi xe khác nhau:
+
+nếu xoay chưa đủ 90° → tăng lên
+
+nếu xoay quá 90° → giảm xuống
+
+Thường sẽ rơi vào khoảng:
+
+350 ms đến 550 ms
+
+2. Ngưỡng tránh vật cản
+
+Hiện tại là:
+
+const int obstacleDistance = 5;
+
+Nếu cảm thấy quá sát, bạn tăng lên:
+
+8 cm
+
+10 cm
+
+thì robot sẽ an toàn hơn.
+
+3. Servo lau
+
+Nếu 2 servo lắc quá nhanh hoặc quá rung, chỉnh:
+
+const int sweepInterval = 25;
+int sweepStep = 4;
+
+Muốn lắc chậm hơn:
+
+tăng sweepInterval
+
+hoặc giảm sweepStep
+
+Ví dụ:
+
+const int sweepInterval = 35;
+int sweepStep = 2;
+Vì sao code này đúng với yêu cầu của bạn
+
+Code này đã đáp ứng đủ:
+
+xe 2 động cơ, 2 bánh sau, 1 bánh đa hướng trước
+
+không dùng servo quét cảm biến
+
+xoay thân robot qua trái/phải để dò đường
+
+gặp vật cản thì dừng
+
+chỉ cần thấy 1 bên trống là đi
+
+2 servo lau đang lắc thì gặp cản sẽ dừng
+
+tránh xong thì lau tiếp
+
+bật nguồn chờ 2 giây rồi mới chạy
+
+Gợi ý nâng cấp thêm
+
+Để robot chạy ổn định hơn, bạn nên bổ sung:
+
+lọc nhiễu khoảng cách
+
+đo 3 lần rồi lấy trung bình
+
+lùi 1 đoạn trước khi xoay
+
+nếu vật cản quá sát
+
+PWM riêng cho lúc xoay và lúc đi thẳng
+
+nguồn riêng cho servo
+
+không nên cấp servo trực tiếp từ 5V Arduino nếu servo tải nặng
+
+Vì 2 servo + cảm biến + L298 + motor nếu dùng nguồn yếu thì rất dễ:
+
+reset Arduino
+
+servo rung
+
+đo siêu âm sai
+Lưu ý nguồn điện rất quan trọng
+
+Bạn đang làm robot lau nhà, nên nên cấp như sau:
+
+Motor DC: nguồn riêng cho L298N
+
+Arduino: 5V ổn định
+
+2 servo lau: cấp 5V riêng, GND nối chung với Arduino
+
+Không nên cấp 2 servo trực tiếp từ chân 5V Arduino Uno nếu servo hoạt động liên tục.
