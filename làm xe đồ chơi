@@ -468,3 +468,595 @@ Arduino: 5V ổn định
 2 servo lau: cấp 5V riêng, GND nối chung với Arduino
 
 Không nên cấp 2 servo trực tiếp từ chân 5V Arduino Uno nếu servo hoạt động liên tục.
+
+
+-----------------------------------------------------------------------------------------------------------------------------------
+
+PHIÊN BẢN 2
+----------------------------------------------------------------------------------------------------------------------------------
+Bản này cải thiện mấy điểm quan trọng:
+
+không dùng delay() dài trong vòng lặp chính nên robot phản ứng mượt hơn
+
+có lọc nhiễu cảm biến siêu âm
+
+có trạng thái rõ ràng: chờ khởi động, đi thẳng, dừng vì vật cản, kiểm tra trái, kiểm tra phải, lùi khi bí
+
+2 servo lau vẫn lắc liên tục khi robot chạy
+
+khi gặp vật cản thì dừng lau
+
+chỉ cần một bên trống là đi, không cần cả 2 bên
+
+dễ chỉnh thời gian xoay 90 độ hơn
+
+1) Code nâng cấp hoàn chỉnh
+#include <Servo.h>
+
+// =====================================================
+// PIN KET NOI
+// =====================================================
+#define enA 10
+#define in1 9
+#define in2 8
+#define in3 7
+#define in4 6
+#define enB 5
+
+#define echoPin A2
+#define trigPin A3
+
+#define SERVO_LEFT_PIN 11
+#define SERVO_RIGHT_PIN 12
+
+// =====================================================
+// DOI TUONG SERVO
+// =====================================================
+Servo servoLeft;
+Servo servoRight;
+
+// =====================================================
+// THAM SO HE THONG
+// =====================================================
+const int obstacleDistance = 5;      // cm
+const int motorSpeedForward = 180;
+const int motorSpeedTurn    = 170;
+const int motorSpeedBack    = 160;
+
+const unsigned long startupWait = 2000;   // cho 2s luc bat nguon
+const unsigned long stopPause   = 200;    // dung lai truoc khi quyet dinh
+const unsigned long turn90Time  = 420;    // canh chinh thuc te
+const unsigned long backTime    = 350;    // lui khi bi ca 2 ben
+const unsigned long moveResumeTime = 250; // chay them sau khi tim duoc huong
+
+// Servo lau
+bool cleaningEnabled = false;
+int sweepAngle = 0;
+int sweepStep = 4;
+unsigned long lastSweepMillis = 0;
+const unsigned long sweepInterval = 25;
+
+// =====================================================
+// STATE MACHINE
+// =====================================================
+enum RobotState {
+  STARTUP_WAIT,
+  MOVING_FORWARD,
+  OBSTACLE_STOP,
+  CHECK_LEFT_TURN,
+  CHECK_LEFT_MEASURE,
+  CHECK_RIGHT_TURN,
+  CHECK_RIGHT_MEASURE,
+  RETURN_CENTER_AND_BACK,
+  RESUME_MOVE
+};
+
+RobotState state = STARTUP_WAIT;
+unsigned long stateStartMillis = 0;
+
+// =====================================================
+// HAM HO TRO
+// =====================================================
+void changeState(RobotState newState) {
+  state = newState;
+  stateStartMillis = millis();
+}
+
+bool stateTimeReached(unsigned long durationMs) {
+  return (millis() - stateStartMillis >= durationMs);
+}
+
+// =====================================================
+// SETUP
+// =====================================================
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(echoPin, INPUT);
+  pinMode(trigPin, OUTPUT);
+
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  pinMode(enB, OUTPUT);
+
+  servoLeft.attach(SERVO_LEFT_PIN);
+  servoRight.attach(SERVO_RIGHT_PIN);
+
+  Stop();
+  setMotorSpeed(motorSpeedForward, motorSpeedForward);
+
+  servoLeft.write(90);
+  servoRight.write(90);
+
+  Serial.println("Robot khoi dong, cho 2 giay...");
+  changeState(STARTUP_WAIT);
+}
+
+// =====================================================
+// LOOP CHINH
+// =====================================================
+void loop() {
+  updateCleaningServo();
+
+  switch (state) {
+    case STARTUP_WAIT:
+      Stop();
+      stopCleaningServo();
+      if (stateTimeReached(startupWait)) {
+        Serial.println("Bat dau di chuyen");
+        startCleaningServo();
+        changeState(MOVING_FORWARD);
+      }
+      break;
+
+    case MOVING_FORWARD: {
+      long d = getStableDistance();
+      Serial.print("Distance Front = ");
+      Serial.println(d);
+
+      if (d <= obstacleDistance) {
+        Stop();
+        stopCleaningServo();
+        changeState(OBSTACLE_STOP);
+      } else {
+        forward();
+      }
+      break;
+    }
+
+    case OBSTACLE_STOP:
+      Stop();
+      if (stateTimeReached(stopPause)) {
+        Serial.println("Gap vat can -> xoay trai 90 do de kiem tra");
+        turnLeftInPlace();
+        changeState(CHECK_LEFT_TURN);
+      }
+      break;
+
+    case CHECK_LEFT_TURN:
+      if (stateTimeReached(turn90Time)) {
+        Stop();
+        changeState(CHECK_LEFT_MEASURE);
+      }
+      break;
+
+    case CHECK_LEFT_MEASURE: {
+      long dLeft = getStableDistance();
+      Serial.print("Distance Left = ");
+      Serial.println(dLeft);
+
+      if (dLeft > obstacleDistance) {
+        Serial.println("Trai trong -> di tiep");
+        startCleaningServo();
+        forward();
+        changeState(RESUME_MOVE);
+      } else {
+        Serial.println("Trai bi can -> xoay phai 180 do de kiem tra ben phai");
+        turnRightInPlace();
+        changeState(CHECK_RIGHT_TURN);
+      }
+      break;
+    }
+
+    case CHECK_RIGHT_TURN:
+      // dang o huong trai, muon sang huong phai can quay 180
+      if (stateTimeReached(turn90Time * 2)) {
+        Stop();
+        changeState(CHECK_RIGHT_MEASURE);
+      }
+      break;
+
+    case CHECK_RIGHT_MEASURE: {
+      long dRight = getStableDistance();
+      Serial.print("Distance Right = ");
+      Serial.println(dRight);
+
+      if (dRight > obstacleDistance) {
+        Serial.println("Phai trong -> di tiep");
+        startCleaningServo();
+        forward();
+        changeState(RESUME_MOVE);
+      } else {
+        Serial.println("Ca 2 ben deu bi can -> quay ve giua va lui");
+        turnLeftInPlace(); // dang o huong phai, quay trai 90 do de ve huong giua
+        changeState(RETURN_CENTER_AND_BACK);
+      }
+      break;
+    }
+
+    case RETURN_CENTER_AND_BACK:
+      if (!stateTimeReached(turn90Time)) {
+        // dang quay ve giua
+      } else if (stateTimeReached(turn90Time) && !stateTimeReached(turn90Time + backTime)) {
+        Stop();
+        backward();
+      } else {
+        Stop();
+        startCleaningServo();
+        changeState(MOVING_FORWARD);
+      }
+      break;
+
+    case RESUME_MOVE:
+      if (stateTimeReached(moveResumeTime)) {
+        changeState(MOVING_FORWARD);
+      }
+      break;
+  }
+}
+
+// =====================================================
+// DOC CAM BIEN SIEU AM - CO LOC NHIEU
+// =====================================================
+long readUltrasonicRaw() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 30000); // timeout 30ms
+  if (duration == 0) return 999;
+  return duration / 29 / 2;
+}
+
+long getStableDistance() {
+  long d1 = readUltrasonicRaw();
+  delay(15);
+  long d2 = readUltrasonicRaw();
+  delay(15);
+  long d3 = readUltrasonicRaw();
+
+  // sắp xếp 3 giá trị để lấy trung vị
+  long a = d1, b = d2, c = d3;
+  if (a > b) swapLong(a, b);
+  if (b > c) swapLong(b, c);
+  if (a > b) swapLong(a, b);
+
+  return b; // median
+}
+
+void swapLong(long &x, long &y) {
+  long t = x;
+  x = y;
+  y = t;
+}
+
+// =====================================================
+// DIEU KHIEN 2 SERVO LAU
+// =====================================================
+void updateCleaningServo() {
+  if (!cleaningEnabled) return;
+
+  unsigned long now = millis();
+  if (now - lastSweepMillis >= sweepInterval) {
+    lastSweepMillis = now;
+
+    sweepAngle += sweepStep;
+
+    if (sweepAngle >= 180) {
+      sweepAngle = 180;
+      sweepStep = -sweepStep;
+    } else if (sweepAngle <= 0) {
+      sweepAngle = 0;
+      sweepStep = -sweepStep;
+    }
+
+    // quay doi xung
+    servoLeft.write(sweepAngle);
+    servoRight.write(180 - sweepAngle);
+  }
+}
+
+void startCleaningServo() {
+  cleaningEnabled = true;
+}
+
+void stopCleaningServo() {
+  cleaningEnabled = false;
+  servoLeft.write(90);
+  servoRight.write(90);
+}
+
+// =====================================================
+// DIEU KHIEN MOTOR
+// =====================================================
+void setMotorSpeed(int leftSpeed, int rightSpeed) {
+  analogWrite(enA, constrain(leftSpeed, 0, 255));
+  analogWrite(enB, constrain(rightSpeed, 0, 255));
+}
+
+void forward() {
+  setMotorSpeed(motorSpeedForward, motorSpeedForward);
+
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, HIGH);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+}
+
+void backward() {
+  setMotorSpeed(motorSpeedBack, motorSpeedBack);
+
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+}
+
+void turnLeftInPlace() {
+  setMotorSpeed(motorSpeedTurn, motorSpeedTurn);
+
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+}
+
+void turnRightInPlace() {
+  setMotorSpeed(motorSpeedTurn, motorSpeedTurn);
+
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, HIGH);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+}
+
+void Stop() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+}
+2) Điểm mạnh của bản này
+
+So với bản trước, bản này tốt hơn ở chỗ:
+
+A. Không phụ thuộc delay() dài trong tránh vật cản
+
+Robot đỡ bị “đơ” hơn.
+
+B. Có lọc nhiễu cảm biến siêu âm
+
+Hàm này:
+
+getStableDistance()
+
+đo 3 lần rồi lấy giá trị trung vị, giúp tránh việc:
+
+đo nhầm do mặt sàn
+
+nhiễu do rung động của motor
+
+phản xạ kém từ vật thể nhỏ
+
+C. Tách trạng thái rõ ràng
+
+Dễ sửa, dễ nâng cấp, ví dụ sau này bạn muốn thêm:
+
+cảm biến chống rơi cầu thang
+
+cảm biến va chạm bumper
+
+chế độ lau zigzag
+
+thì thêm state rất dễ.
+
+3) Chỗ bạn cần chỉnh thực tế
+a) Góc xoay 90 độ
+
+Dòng này phải test:
+
+const unsigned long turn90Time = 420;
+
+Ví dụ:
+
+quay chưa đủ 90° → tăng lên 450, 480
+
+quay quá 90° → giảm xuống 380, 400
+
+b) Ngưỡng phát hiện vật cản
+
+Hiện đang là:
+
+const int obstacleDistance = 5;
+
+Thực tế robot lau nhà nên để:
+
+6 cm
+
+7 cm
+
+8 cm
+
+thường an toàn hơn.
+
+5 cm hơi sát, dễ chạm đầu xe nếu robot đang chạy nhanh.
+
+c) Tốc độ servo lau
+
+Muốn lau chậm hơn, giảm rung hơn:
+
+int sweepStep = 2;
+const unsigned long sweepInterval = 35;
+
+Muốn lắc mạnh hơn, nhanh hơn:
+
+int sweepStep = 5;
+const unsigned long sweepInterval = 20;
+4) Gợi ý đấu dây nguồn đúng
+
+Phần này cực kỳ quan trọng.
+
+Không nên
+
+cấp 2 servo từ chân 5V của Arduino Uno
+
+Vì sẽ dễ:
+
+reset mạch
+
+servo giật
+
+cảm biến siêu âm đo sai
+
+motor quay yếu
+
+Nên dùng
+
+1 nguồn cho motor DC
+
+1 nguồn 5V riêng cho servo
+
+Arduino có 5V ổn định
+
+GND tất cả phải nối chung
+
+Ví dụ:
+
+pin/mạch nguồn motor → L298N
+
+module giảm áp 5V 3A → cấp cho 2 servo
+
+Arduino dùng 5V riêng hoặc qua jack/Vin phù hợp
+
+5) Hạn chế hiện tại của cách xoay theo thời gian
+
+Code này đang xoay theo:
+
+delay thời gian / millis thời gian
+
+Tức là không có encoder, nên 90° chỉ là gần đúng.
+
+Nếu bánh xe:
+
+trượt
+
+pin yếu
+
+nền gạch khác ma sát
+
+robot nặng hơn
+
+thì góc xoay sẽ lệch.
+
+Muốn chính xác hơn
+
+Bạn nên nâng cấp theo 1 trong 2 cách:
+
+Cách 1: thêm encoder bánh xe
+
+Rất hợp lý nếu muốn robot quay đúng 90°.
+
+Cách 2: thêm MPU6050
+
+Dùng gyro để đo góc quay thật.
+
+Với robot lau nhà, MPU6050 thường là cách rẻ và hiệu quả.
+
+6) Nâng cấp tiếp theo rất đáng làm
+
+Mình khuyên bạn nên thêm 3 thứ:
+
+1. Cảm biến va chạm cơ khí
+
+Nếu siêu âm đo hụt thì bumper vẫn cứu được.
+
+2. Cảm biến chống rơi
+
+Nếu robot đi gần mép bậc thềm/cầu thang thì dừng ngay.
+
+3. Chế độ dọn phòng thông minh
+
+Hiện tại robot chỉ:
+
+đi thẳng
+
+gặp vật cản thì né
+
+Sau này có thể nâng thành:
+
+đi zigzag
+
+đi men tường
+
+quay về dock
+
+7) Nếu bạn đang dùng servo quay liên tục
+
+Mình nhắc lại chỗ này vì rất quan trọng:
+
+Bạn nói:
+
+bổ sung 2 servo sẽ xoay liên tục
+tránh xong sẽ tiếp tục lắc qua lại 180 độ
+
+Hai ý này khác nhau:
+
+Nếu là servo quay liên tục
+
+chỉ quay thuận/ngược
+
+không điều khiển được góc 180°
+
+Nếu là servo thường 180°
+
+điều khiển được góc 0–180°
+
+phù hợp với yêu cầu “lắc qua lại 180°”
+
+Cho nên nếu mục tiêu là cánh lau lắc trái-phải, hãy dùng:
+
+SG90
+
+MG90S
+
+MG996R nếu tải nặng hơn
+
+8) Mình gợi ý phiên bản thực tế hơn
+
+Nếu làm bản chạy ổn ngoài đời, mình sẽ khuyên cấu hình này:
+
+Arduino Uno/Nano
+
+L298N hoặc tốt hơn là BTS7960 / driver hiệu suất cao hơn
+
+HC-SR04
+
+2 motor DC giảm tốc
+
+2 servo SG90/MG90S cho cụm lau
+
+1 bánh tự do phía trước
+
+nguồn riêng cho servo
+
+thêm 2 bumper switch phía trước
+
+
+
+
